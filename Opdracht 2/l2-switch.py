@@ -36,15 +36,13 @@ with open(csv_file, mode='r') as file:
         
         if not ip_address:  # Check if the value is empty or missing
             commands = [
-                        "conf t",
                         f"vlan {row['Vlan']}",
                         f"name {row['Description']}",
                         f"interface range FastEthernet 0/{row['Ports']}",
                         "switchport mode access",
                         f"switchport access vlan {row['Vlan']}",
                         "no shut",
-                        "end",
-                        "wr mem"
+                        "end"                        
                         ]
 
         else:
@@ -55,22 +53,26 @@ with open(csv_file, mode='r') as file:
                         f"desc {row['Description']}",
                         f"ip address {row['IP Address']} {row['Netmask']}",
                         "no shut",
-                        "end","wr mem"
+                        "end"
                         ]
-        #net_connect.enable()
+            
         output = net_connect.send_config_set(commands)
         print(output)
         commands = []
 
 
+# Save the configuration
+output = net_connect.send_command("copy run start", expect_string=r"Destination filename \[startup-config\]\?")
+output += net_connect.send_command("", expect_string='Building\\ configuration\\.\\.\\.')
+print(output)
+
 
 # Download config using tftp
-commands = ["end","copy running-config tftp",
-            "192.168.100.101",
-            ""
-            ]   
+output = net_connect.send_command("copy running-config tftp", expect_string=r"Address or name of remote host")
+output +=net_connect.send_command("192.168.100.10", expect_string=r"Destination filename") 
+output += net_connect.send_command("", expect_string=r"#")
+print(output)
 
-output = net_connect.send_config_set(commands)
 print(output)
 
 # Disconnect from the switch

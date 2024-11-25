@@ -6,7 +6,7 @@ from netmiko import ConnectHandler
 # Enable logging for debugging
 logging.basicConfig(filename='netmiko_debug.log', level=logging.DEBUG)
 
-csv_file = "BST-D-1-242.csv"
+csv_file = "./Opdracht 2/BST-D-1-242.csv"
 
 # Define the device parameters
 switch = {
@@ -21,18 +21,7 @@ switch = {
 # Connect to the switch
 net_connect = ConnectHandler(**switch)
 
-  # Manually invoke enable mode
-""" print("In enable mode:", net_connect.check_enable_mode())
-
-config_commands = [ 'conf t',
-                    'description This is a test interface',
-                    'int fa0/24',
-                    'no shut', 'end', 'wr mem']
-
-print(net_connect.find_prompt())  # Check the device prompt before and after commands
-output = net_connect.send_config_set(config_commands)
-print(output) """
-
+# Get config and execute commands
 with open(csv_file, mode='r') as file:
     csv_reader = csv.DictReader(file,delimiter=';')
     
@@ -47,15 +36,13 @@ with open(csv_file, mode='r') as file:
         
         if not ip_address:  # Check if the value is empty or missing
             commands = [
-                        "conf t",
                         f"vlan {row['Vlan']}",
                         f"name {row['Description']}",
                         f"interface range FastEthernet 0/{row['Ports']}",
                         "switchport mode access",
                         f"switchport access vlan {row['Vlan']}",
                         "no shut",
-                        "end",
-                        "wr mem"
+                        "end"                        
                         ]
 
         else:
@@ -66,16 +53,28 @@ with open(csv_file, mode='r') as file:
                         f"desc {row['Description']}",
                         f"ip address {row['IP Address']} {row['Netmask']}",
                         "no shut",
-                        # f"int ra fa{row['Ports']}",
-                        # "switchport mode access",
-                        # f"switchport access vlan {row['Vlan']}",
-                        # f"description {row['Description']}",
-                        "end","wr mem"
+                        "end"
                         ]
-        #net_connect.enable()
+            
         output = net_connect.send_config_set(commands)
         print(output)
         commands = []
 
+
+# Save the configuration
+output = net_connect.send_command("copy run start", expect_string=r"Destination filename \[startup-config\]\?")
+output += net_connect.send_command("", expect_string='Building\\ configuration\\.\\.\\.')
+print(output)
+
+
+# Download config using tftp
+output = net_connect.send_command("copy running-config tftp", expect_string=r"Address or name of remote host")
+output +=net_connect.send_command("192.168.100.10", expect_string=r"Destination filename") 
+output += net_connect.send_command("", expect_string=r"#")
+print(output)
+
+print(output)
+
 # Disconnect from the switch
 net_connect.disconnect()
+

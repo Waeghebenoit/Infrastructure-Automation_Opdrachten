@@ -1,80 +1,102 @@
 import csv
-import time
-import logging
 from netmiko import ConnectHandler
+import datetime
 
-# Enable logging for debugging
-logging.basicConfig(filename='netmiko_debug.log', level=logging.DEBUG)
+TFTP_SERVER_IP = "192.168.100.10"  # Verander dit naar je TFTP-server IP
+TFTP_FILENAME = "switch_config_backup"
+switch_ip = "192.168.100.100"
 
-csv_file = "./Opdracht 2/BST-D-1-242.csv"
+# Functie om de CSV-bestanden te lezen
+def read_csv(file_path):
+    vlan_data = []
+    with open(file_path, mode='r', encoding='utf-8') as file:
+        csv_reader = csv.DictReader(file, delimiter=';')
+        for row in csv_reader:
+            vlan_data.append(row)
+    return vlan_data
 
-# Define the device parameters
-switch = {
-    "device_type": "cisco_ios",  # For Cisco devices
-    "host": "192.168.100.100",   # Replace with your switch IP address
-    "username": "user",          # Replace with your username
-    "password": "123",           # Replace with your login password
-    "secret": "123",             # Replace with your enable password (the second Password prompt)
-    "timeout": 120               # Increase the timeout duration
-}
+# Functie om de juiste configuratie voor Layer-2 of Layer-3 toe te passen
+def configure_vlan(device, vlan_data):
+    # Maak verbinding met de switch
+    net_connect = ConnectHandler(**device)
+    net_connect.enable()  
+    net_connect.timeout = 120  
 
-# Connect to the switch
-net_connect = ConnectHandler(**switch)
-
-# Get config and execute commands
-with open(csv_file, mode='r') as file:
-    csv_reader = csv.DictReader(file,delimiter=';')
-    
-    for row_num, row in enumerate(csv_reader, start=1):
-        # Clean headers and values
-        row = {key.strip(): value.strip() for key, value in row.items()}
-        commands = ['conf t', 'vtp mode transparent', 'end', 'wr mem']
-        net_connect.enable()
-        output = net_connect.send_config_set(commands)
+    for vlan in vlan_data:
+        vlan_id = vlan['Vlan']
+        description = vlan['Description']
+        ip_address = vlan['IP Address']
+        netmask = vlan['Netmask']
+        ports = vlan['Ports']
         
-        ip_address = row.get("IP Address", "")  # Safely get "IP Address"
-        
-        if not ip_address:  # Check if the value is empty or missing
-            commands = [
-                        f"vlan {row['Vlan']}",
-                        f"name {row['Description']}",
-                        f"interface range FastEthernet 0/{row['Ports']}",
-                        "switchport mode access",
-                        f"switchport access vlan {row['Vlan']}",
-                        "no shut",
-                        "end"                        
-                        ]
+        config = []
 
-        else:
-            commands = [
-                        f"vlan {row['Vlan']}",
-                        f"name {row['Description']}",
-                        f"int vlan{row['Vlan']}",
-                        f"desc {row['Description']}",
-                        f"ip address {row['IP Address']} {row['Netmask']}",
-                        "no shut",
-                        "end"
-                        ]
+        # VLAN (geen IP addressen)
+        if not ip_address:
+            config.extend([
+                f"vlan {vlan_id}",
+                f"name {description}",
+                "exit"
+            ])
             
-        output = net_connect.send_config_set(commands)
-        print(output)
-        commands = []
+            # Configureer poorten voor Layer-2 VLAN
+            if ports:
+                for port in ports.split('-'):
+                    config.extend([
+                        f"interface range fa0/{port}",
+                        "switchport mode access",
+                        f"switchport access vlan {vlan_id}",
+                        "exit"
+                    ])
+        
+        # Layer-3 VLAN (met IP gegevens)
+        elif ip_address and netmask:
+            config.extend([
+                f"vlan {vlan_id}",
+                f"name {description}",
+                "exit",
+                f"interface vlan {vlan_id}",
+                f"ip address {ip_address} {netmask}",
+                "no shutdown",
+                "exit"
+            ])
 
+            # Routing activeren voor Layer-3 switch
+            config.append("ip routing")
+        
+        # Verstuur configuratie naar de switch
+        net_connect.send_config_set(config)
+        print(config)
 
-# Save the configuration
-output = net_connect.send_command("copy run start", expect_string=r"Destination filename \[startup-config\]\?")
-output += net_connect.send_command("", expect_string='Building\\ configuration\\.\\.\\.')
-print(output)
+        net_connect.send_command("")	
+        # Download configuratie via TFTP
+        tftp_command = f"copy running-config tftp://{TFTP_SERVER_IP}/{TFTP_FILENAME}_{switch_ip}.cfg"
+        tftp_output = net_connect.send_command_timing(tftp_command)
+        if "address" in tftp_output.lower():
+            tftp_output += net_connect.send_command_timing(TFTP_SERVER_IP)
+        if "filename" in tftp_output.lower():
+            tftp_output += net_connect.send_command_timing(f"{TFTP_FILENAME}_{switch_ip}.cfg")
+        print(tftp_output)
 
+    # Disconnect na configuratie
+    net_connect.disconnect()
 
-# Download config using tftp
-output = net_connect.send_command("copy running-config tftp", expect_string=r"Address or name of remote host")
-output +=net_connect.send_command("192.168.100.10", expect_string=r"Destination filename") 
-output += net_connect.send_command("", expect_string=r"#")
-print(output)
+# Hoofdprogramma
+if __name__ == "__main__":
+    # SSH connectie-instellingen voor de Cisco switch
+    device = {
+        'device_type': 'cisco_xe',
+        'host': '192.168.100.100',  # Vervang dit met je daadwerkelijke switch IP
+        'username': 'user',     # Vervang dit met je daadwerkelijke gebruikersnaam
+        'password': '123',     # Vervang dit met je daadwerkelijke wachtwoord
+        'secret': '123',       # Vervang dit met je enable wachtwoord indien nodig
+    }
 
-print(output)
+    # Lees de CSV
+    file_path = 'C:\MCT - IoT Engineer\Infrastructure Automation\Infrastructure-Automation_Opdrachten\Opdracht 2\BST-D-1-242.csv'  # Het pad naar je CSV-bestand
+    vlan_data = read_csv(file_path)
 
-# Disconnect from the switch
-net_connect.disconnect()
+    # Configureer de switch met de VLAN gegevens
+    configure_vlan(device, vlan_data)
 
+    print("Finished Configuration!")
